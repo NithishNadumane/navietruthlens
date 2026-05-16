@@ -76,7 +76,7 @@ const Index = () => {
           </div>
 
           <p className="text-base md:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-            Detect misinformation instantly with <span className="text-primary font-semibold">LSTM neural networks</span> and <span className="text-secondary font-semibold">NLP preprocessing</span>. Powered by PyTorch.
+            Detect misinformation instantly with <span className="text-primary font-semibold">Naive Bayes Classification</span> and <span className="text-secondary font-semibold">NLP preprocessing</span>. Powered by PyTorch.
           </p>
         </div>
 
@@ -141,7 +141,7 @@ const Index = () => {
         {/* Footer */}
         <footer className="mt-20 text-center text-sm text-muted-foreground/60 space-y-1 pb-8">
           <p className="font-semibold text-muted-foreground/80">TruthLens — Data Mining Project</p>
-          <p>Built with PyTorch • LSTM • NLTK • React • Flask</p>
+          <p>Built with PyTorch • NBC • NLTK • React • Flask</p>
         </footer>
       </div>
     </div>

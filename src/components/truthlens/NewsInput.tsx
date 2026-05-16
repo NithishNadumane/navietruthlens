@@ -99,7 +99,7 @@ export const NewsInput = ({ onAnalyze, isProcessing }: NewsInputProps) => {
           {isProcessing ? (
             <>
               <Loader2 className="w-6 h-6 mr-2 animate-spin" />
-              Analyzing with LSTM Model...
+              Analyzing with Navie Model...
             </>
           ) : (
             <>

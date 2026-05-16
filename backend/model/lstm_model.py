@@ -1,54 +1,79 @@
 """
-TruthLens - LSTM Model Definition
-Deep Learning model for fake news classification using PyTorch.
+TruthLens - Naive Bayes Model Definition
+Machine Learning model for fake news classification using
+TF-IDF vectorization and Multinomial Naive Bayes.
 """
 
-import torch
-import torch.nn as nn
+import joblib
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
 
 
-class LSTMClassifier(nn.Module):
+class NaiveBayesClassifier:
     """
-    LSTM-based binary classifier for fake news detection.
+    Naive Bayes based classifier for fake news detection.
 
     Architecture:
-        - Embedding Layer: Converts word indices to dense vectors
-        - LSTM Layer: Captures sequential/contextual patterns in text
-        - Dropout: Regularization to prevent overfitting
-        - Fully Connected Layer: Maps LSTM output to binary prediction
+        - TF-IDF Vectorizer: Converts text into numerical feature vectors
+        - Multinomial Naive Bayes: Performs probabilistic classification
     """
 
-    def __init__(self, vocab_size, embedding_dim=128, hidden_dim=256, output_dim=1,
-                 n_layers=2, dropout=0.3, pad_idx=0):
-        super(LSTMClassifier, self).__init__()
+    def __init__(
+        self,
+        max_features=5000,
+        ngram_range=(1, 2)
+    ):
 
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
-        self.lstm = nn.LSTM(
-            embedding_dim,
-            hidden_dim,
-            num_layers=n_layers,
-            batch_first=True,
-            dropout=dropout if n_layers > 1 else 0,
-            bidirectional=True
+        # TF-IDF feature extractor
+        self.vectorizer = TfidfVectorizer(
+            max_features=max_features,
+            ngram_range=ngram_range
         )
-        self.dropout = nn.Dropout(dropout)
-        self.fc = nn.Linear(hidden_dim * 2, output_dim)  # *2 for bidirectional
-        self.sigmoid = nn.Sigmoid()
 
-    def forward(self, text, text_lengths=None):
-        # text: [batch_size, seq_len]
-        embedded = self.dropout(self.embedding(text))
+        # Naive Bayes classifier
+        self.model = MultinomialNB()
 
-        if text_lengths is not None:
-            packed = nn.utils.rnn.pack_padded_sequence(
-                embedded, text_lengths.cpu(), batch_first=True, enforce_sorted=False
-            )
-            packed_output, (hidden, cell) = self.lstm(packed)
-        else:
-            _, (hidden, cell) = self.lstm(embedded)
+    def fit(self, texts, labels):
+        """
+        Train the model on text data.
+        """
 
-        # Concatenate final forward and backward hidden states
-        hidden = torch.cat((hidden[-2, :, :], hidden[-1, :, :]), dim=1)
-        hidden = self.dropout(hidden)
-        output = self.fc(hidden)
-        return self.sigmoid(output)
+        # Convert text → TF-IDF vectors
+        X = self.vectorizer.fit_transform(texts)
+
+        # Train Naive Bayes
+        self.model.fit(X, labels)
+
+    def predict(self, texts):
+        """
+        Predict labels for input texts.
+        """
+
+        X = self.vectorizer.transform(texts)
+
+        return self.model.predict(X)
+
+    def predict_proba(self, texts):
+        """
+        Return prediction probabilities.
+        """
+
+        X = self.vectorizer.transform(texts)
+
+        return self.model.predict_proba(X)
+
+    def save(self, model_path, vectorizer_path):
+        """
+        Save trained model and vectorizer.
+        """
+
+        joblib.dump(self.model, model_path)
+        joblib.dump(self.vectorizer, vectorizer_path)
+
+    def load(self, model_path, vectorizer_path):
+        """
+        Load trained model and vectorizer.
+        """
+
+        self.model = joblib.load(model_path)
+        self.vectorizer = joblib.load(vectorizer_path)
