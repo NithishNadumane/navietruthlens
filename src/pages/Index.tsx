@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ShieldCheck, BarChart3, Cpu, History, Sparkles } from "lucide-react";
 import { predictNews } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
-import type { PredictionResult } from "@/lib/api";
+import type { PredictionResult, InputMode } from "@/lib/api";
 
 const Index = () => {
   const [isProcessing, setIsProcessing] = useState(false);
@@ -16,19 +16,26 @@ const Index = () => {
   const [activeTab, setActiveTab] = useState("detect");
   const { toast } = useToast();
 
-  const handleAnalyze = async (text: string) => {
+  const handleAnalyze = async (text: string, mode: InputMode) => {
     setIsProcessing(true);
     setResult(null);
 
     try {
-      const prediction = await predictNews(text);
+      const prediction = await predictNews(text, mode);
       setResult(prediction);
       addToHistory(text, prediction.prediction, prediction.confidence);
       setActiveTab("detect");
 
+      const modeLabel = mode === "headline" ? "Headline" : "Article";
       toast({
-        title: prediction.prediction === "REAL" ? "✅ News Verified" : "🚨 Fake News Detected",
-        description: `Confidence: ${prediction.confidence}%`,
+        title: prediction.prediction === "REAL"
+          ? `✅ ${modeLabel} Verified — Real`
+          : prediction.prediction === "SUSPICIOUS"
+          ? `⚠️ ${modeLabel} Suspicious`
+          : `🚨 ${modeLabel} Flagged — Fake`,
+        description: `Confidence: ${prediction.confidence}%${
+          prediction.detected_language === 'kn' ? ' · Translated from Kannada' : ''
+        }`,
       });
     } catch (error: any) {
       console.error("Prediction error:", error);
@@ -141,7 +148,7 @@ const Index = () => {
         {/* Footer */}
         <footer className="mt-20 text-center text-sm text-muted-foreground/60 space-y-1 pb-8">
           <p className="font-semibold text-muted-foreground/80">TruthLens — Data Mining Project</p>
-          <p>Built with PyTorch • NBC • NLTK • React • Flask</p>
+          <p>Built with Naive Bayes • NLTK • React • Flask • Inshorts DB</p>
         </footer>
       </div>
     </div>

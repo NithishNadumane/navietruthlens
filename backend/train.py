@@ -1,6 +1,10 @@
 """
-TruthLens - Model Training Script
-Trains the Naive Bayes model on the Fake News Dataset.
+TruthLens - Dual Model Training Script
+Trains TWO Naive Bayes models from the same dataset:
+  1. Article model  → uses title + full text  → saved as naive_bayes_article.pkl
+  2. Headline model → uses title only         → saved as naive_bayes_headline.pkl
+
+The article model is also saved as naive_bayes.pkl (backward compatibility).
 
 Usage:
     python train.py
@@ -14,11 +18,8 @@ import joblib
 import pandas as pd
 
 from sklearn.model_selection import train_test_split
-
 from sklearn.feature_extraction.text import TfidfVectorizer
-
 from sklearn.naive_bayes import MultinomialNB
-
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -34,397 +35,236 @@ from model.preprocess import TextPreprocessor
 # Configuration
 # =========================
 
-DATASET_PATH = os.path.join(
-    os.path.dirname(__file__),
-    'data',
-    'dataset.csv'
-)
-
-SAVE_DIR = os.path.join(
-    os.path.dirname(__file__),
-    'saved_model'
-)
-
-TEST_SIZE = 0.2
-
+DATASET_PATH = os.path.join(os.path.dirname(__file__), 'data', 'dataset.csv')
+SAVE_DIR     = os.path.join(os.path.dirname(__file__), 'saved_model')
+TEST_SIZE    = 0.2
 RANDOM_STATE = 42
-
-# Reduced memory usage
-MAX_FEATURES = 2000
+MAX_FEATURES = 5000
 
 
 def load_dataset():
-    """
-    Load dataset.
-    """
-
-    print("[1/5] Loading dataset...")
+    """Load and validate the dataset. Returns the full DataFrame."""
+    print("[1/6] Loading dataset...")
 
     if not os.path.exists(DATASET_PATH):
-
-        print(f"Dataset not found: {DATASET_PATH}")
-
-        return None, None
+        print(f"\n[ERROR] Dataset not found: {DATASET_PATH}")
+        print("  -> Download Fake.csv and True.csv from:")
+        print("     https://www.kaggle.com/datasets/clmentbisaillon/fake-and-real-news-dataset")
+        print("  -> Place them in backend/data/")
+        print("  -> Run: python download_dataset.py")
+        return None
 
     df = pd.read_csv(DATASET_PATH)
 
     required_cols = ['title', 'text', 'label']
-
     for col in required_cols:
-
         if col not in df.columns:
+            print(f"[ERROR] Missing column: {col}")
+            return None
 
-            print(f"Missing column: {col}")
-
-            return None, None
-
-    # Combine title + text
-    df['text'] = (
-        df['title'].astype(str)
-        + ' '
-        + df['text'].astype(str)
-    )
+    # Remove rows with missing title or text
+    df = df.dropna(subset=['title', 'text'])
 
     # Shuffle
-    df = df.sample(
-        frac=1,
-        random_state=RANDOM_STATE
-    ).reset_index(drop=True)
+    df = df.sample(frac=1, random_state=RANDOM_STATE).reset_index(drop=True)
 
-    # Remove empty rows
-    df = df.dropna(subset=['text'])
+    print(f"  Total samples : {len(df)}")
+    print(f"  Fake          : {len(df[df.label == 1])}")
+    print(f"  Real          : {len(df[df.label == 0])}")
 
-    print(f"Total samples: {len(df)}")
+    return df
 
-    print(
-        f"Fake: {len(df[df.label == 1])} | "
-        f"Real: {len(df[df.label == 0])}"
+
+def preprocess_texts(texts: list, preprocessor: TextPreprocessor, label: str) -> list:
+    """Run the NLP preprocessing pipeline on a list of texts."""
+    print(f"[2/6] Preprocessing {label} texts...")
+    processed = []
+    for i, text in enumerate(texts):
+        processed.append(preprocessor.preprocess(str(text)))
+        if (i + 1) % 5000 == 0:
+            print(f"  Processed {i + 1}/{len(texts)}...")
+    return processed
+
+
+def train_and_evaluate(X_train, X_test, y_train, y_test, label: str) -> tuple:
+    """Train a MultinomialNB and return (model, metrics_dict)."""
+    print(f"[4/6] Training {label} model...")
+    model = MultinomialNB()
+    model.fit(X_train, y_train)
+
+    print(f"[5/6] Evaluating {label} model...")
+    predictions = model.predict(X_test)
+
+    accuracy  = accuracy_score(y_test, predictions)  * 100
+    precision = precision_score(y_test, predictions) * 100
+    recall    = recall_score(y_test, predictions)    * 100
+    f1        = f1_score(y_test, predictions)        * 100
+    cm        = confusion_matrix(y_test, predictions)
+
+    print(f"\n  === {label} Results ===")
+    print(f"  Accuracy  : {accuracy:.2f}%")
+    print(f"  Precision : {precision:.2f}%")
+    print(f"  Recall    : {recall:.2f}%")
+    print(f"  F1 Score  : {f1:.2f}%")
+    print(f"  TN={cm[0][0]} FP={cm[0][1]} FN={cm[1][0]} TP={cm[1][1]}")
+
+    metrics = {
+        "accuracy"         : round(accuracy, 2),
+        "precision"        : round(precision, 2),
+        "recall"           : round(recall, 2),
+        "f1_score"         : round(f1, 2),
+        "confusion_matrix" : {
+            "true_positive"  : int(cm[1][1]),
+            "true_negative"  : int(cm[0][0]),
+            "false_positive" : int(cm[0][1]),
+            "false_negative" : int(cm[1][0]),
+        },
+        "training_samples" : int(X_train.shape[0]),
+        "test_samples"     : int(X_test.shape[0]),
+        "model_architecture": {
+            "type"        : "TF-IDF + Multinomial Naive Bayes",
+            "max_features": MAX_FEATURES,
+            "ngram_range" : "(1, 2)",
+            "input"       : label,
+        },
+        "dataset" : "Kaggle Fake News Dataset",
+        "mode"    : "trained",
+    }
+    return model, metrics
+
+
+def vectorize(processed_texts: list, label: str):
+    """Fit a TF-IDF vectorizer on processed texts. Returns (vectorizer, X)."""
+    print(f"[3/6] Vectorizing {label} texts (TF-IDF)...")
+
+    vectorizer = TfidfVectorizer(
+        max_features = MAX_FEATURES,
+        ngram_range  = (1, 2),    # unigrams + bigrams
+        stop_words   = 'english',
+        max_df       = 0.7,
+        min_df       = 2,
+        dtype        = 'float32',
     )
+    X = vectorizer.fit_transform(processed_texts)
+    print(f"  TF-IDF shape: {X.shape}")
+    return vectorizer, X
 
-    return df['text'].values, df['label'].values
+
+def save_model(model, vectorizer, metrics, model_filename, vec_filename, metrics_filename):
+    """Persist model, vectorizer, and metrics to disk."""
+    os.makedirs(SAVE_DIR, exist_ok=True)
+
+    joblib.dump(model,      os.path.join(SAVE_DIR, model_filename))
+    joblib.dump(vectorizer, os.path.join(SAVE_DIR, vec_filename))
+
+    with open(os.path.join(SAVE_DIR, metrics_filename), 'w') as f:
+        json.dump(metrics, f, indent=2)
+
+    print(f"[6/6] Saved → {model_filename}, {vec_filename}, {metrics_filename}")
 
 
 def main():
-
     print("=" * 60)
-    print(" TruthLens — Naive Bayes Training")
+    print(" TruthLens — Dual Model Training (Article + Headline)")
     print("=" * 60)
 
-    start_time = time.time()
+    start = time.time()
 
-    # =========================
-    # Load dataset
-    # =========================
-
-    texts, labels = load_dataset()
-
-    if texts is None:
+    # --- Load ---
+    df = load_dataset()
+    if df is None:
         return
 
-    # =========================
-    # Preprocessing
-    # =========================
-
-    print("[2/5] Preprocessing text...")
-
     preprocessor = TextPreprocessor()
+    labels       = df['label'].values
 
-    processed_texts = []
+    # ================================================================
+    # MODEL 1: ARTICLE  (title + body)
+    # ================================================================
+    print("\n" + "─" * 40)
+    print(" Training ARTICLE model (title + body)")
+    print("─" * 40)
 
-    for i, text in enumerate(texts):
+    article_texts = (
+        df['title'].astype(str) + ' ' + df['text'].astype(str)
+    ).tolist()
 
-        processed = preprocessor.preprocess(text)
+    proc_article = preprocess_texts(article_texts, preprocessor, "article")
+    vec_article, X_article = vectorize(proc_article, "article")
 
-        processed_texts.append(processed)
-
-        if (i + 1) % 5000 == 0:
-
-            print(
-                f"Processed {i + 1}/{len(texts)} texts..."
-            )
-
-    # =========================
-    # TF-IDF Vectorization
-    # =========================
-
-    print("[3/5] Creating TF-IDF vectors...")
-
-    vectorizer = TfidfVectorizer(
-
-        # Lower memory usage
-        max_features=2000,
-
-        # Use only single words
-        ngram_range=(1, 1),
-
-        # Remove common English words
-        stop_words='english',
-
-        # Ignore extremely common words
-        max_df=0.7,
-
-        # Ignore rare words
-        min_df=2,
-
-        # Lower RAM usage
-        dtype='float32'
+    X_tr_a, X_te_a, y_tr, y_te = train_test_split(
+        X_article, labels,
+        test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=labels
     )
 
-    X = vectorizer.fit_transform(processed_texts)
+    model_article, metrics_article = train_and_evaluate(X_tr_a, X_te_a, y_tr, y_te, "Article")
 
-    print(f"TF-IDF Shape: {X.shape}")
-
-    # =========================
-    # Train-Test Split
-    # =========================
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        labels,
-        test_size=TEST_SIZE,
-        random_state=RANDOM_STATE,
-        stratify=labels
+    save_model(
+        model_article, vec_article, metrics_article,
+        'naive_bayes_article.pkl', 'tfidf_article.pkl', 'metrics_article.json'
+    )
+    # Backward-compat alias
+    save_model(
+        model_article, vec_article, metrics_article,
+        'naive_bayes.pkl', 'tfidf.pkl', 'metrics.json'
     )
 
-    print(
-        f"Train Samples: {X_train.shape[0]}"
+    # ================================================================
+    # MODEL 2: HEADLINE  (title only — no stop-word removal in TF-IDF)
+    # ================================================================
+    print("\n" + "─" * 40)
+    print(" Training HEADLINE model (title only)")
+    print("─" * 40)
+
+    headline_texts = df['title'].astype(str).tolist()
+
+    # For headlines, preprocess without stop-word removal
+    # (headlines are short — removing words hurts more than helps)
+    print("[2/6] Preprocessing headline texts (lemmatize-only)...")
+    proc_headlines = []
+    for i, text in enumerate(headline_texts):
+        cleaned = preprocessor.clean_text(text)
+        tokens  = preprocessor.tokenize(cleaned)
+        tokens  = preprocessor.lemmatize(tokens)
+        proc_headlines.append(' '.join(tokens))
+
+    print("[3/6] Vectorizing headline texts (TF-IDF, no stop_words filter)...")
+    vec_headline = TfidfVectorizer(
+        max_features = MAX_FEATURES,
+        ngram_range  = (1, 2),
+        # No stop_words here — headlines are already short
+        max_df       = 0.85,   # slightly more lenient for short texts
+        min_df       = 1,      # lower min_df since fewer words per doc
+        dtype        = 'float32',
+    )
+    X_headline = vec_headline.fit_transform(proc_headlines)
+    print(f"  TF-IDF shape: {X_headline.shape}")
+
+    X_tr_h, X_te_h, y_tr_h, y_te_h = train_test_split(
+        X_headline, labels,
+        test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=labels
     )
 
-    print(
-        f"Test Samples: {X_test.shape[0]}"
+    model_headline, metrics_headline = train_and_evaluate(
+        X_tr_h, X_te_h, y_tr_h, y_te_h, "Headline"
     )
 
-    # =========================
-    # Train Model
-    # =========================
-
-    print("[4/5] Training Naive Bayes model...")
-
-    model = MultinomialNB()
-
-    model.fit(X_train, y_train)
-
-    # =========================
-    # Evaluation
-    # =========================
-
-    print("[5/5] Evaluating model...")
-
-    predictions = model.predict(X_test)
-
-    accuracy = accuracy_score(
-        y_test,
-        predictions
-    ) * 100
-
-    precision = precision_score(
-        y_test,
-        predictions
-    ) * 100
-
-    recall = recall_score(
-        y_test,
-        predictions
-    ) * 100
-
-    f1 = f1_score(
-        y_test,
-        predictions
-    ) * 100
-
-    cm = confusion_matrix(
-        y_test,
-        predictions
+    save_model(
+        model_headline, vec_headline, metrics_headline,
+        'naive_bayes_headline.pkl', 'tfidf_headline.pkl', 'metrics_headline.json'
     )
 
-    print("\nFinal Results:")
-
-    print(f"Accuracy:  {accuracy:.2f}%")
-
-    print(f"Precision: {precision:.2f}%")
-
-    print(f"Recall:    {recall:.2f}%")
-
-    print(f"F1 Score:  {f1:.2f}%")
-
-    print("\nConfusion Matrix:")
-
-    print(f"TN = {cm[0][0]}")
-
-    print(f"FP = {cm[0][1]}")
-
-    print(f"FN = {cm[1][0]}")
-
-    print(f"TP = {cm[1][1]}")
-
-    # =========================
-    # Save Files
-    # =========================
-
-    os.makedirs(SAVE_DIR, exist_ok=True)
-
-    # Save model
-    joblib.dump(
-        model,
-        os.path.join(
-            SAVE_DIR,
-            'naive_bayes.pkl'
-        )
-    )
-
-    # Save vectorizer
-    joblib.dump(
-        vectorizer,
-        os.path.join(
-            SAVE_DIR,
-            'tfidf.pkl'
-        )
-    )
-
-    # Save metrics
-    metrics = {
-
-        "accuracy":
-            round(accuracy, 2),
-
-        "precision":
-            round(precision, 2),
-
-        "recall":
-            round(recall, 2),
-
-        "f1_score":
-            round(f1, 2),
-
-        "confusion_matrix": {
-
-            "true_positive":
-                int(cm[1][1]),
-
-            "true_negative":
-                int(cm[0][0]),
-
-            "false_positive":
-                int(cm[0][1]),
-
-            "false_negative":
-                int(cm[1][0])
-        },
-
-        "training_samples":
-            int(X_train.shape[0]),
-
-        "test_samples":
-            int(X_test.shape[0]),
-
-        "model_architecture": {
-
-            "type":
-                "TF-IDF + Multinomial Naive Bayes",
-
-            "max_features":
-                2000,
-
-            "ngram_range":
-                "(1,1)"
-        },
-
-        "dataset":
-            "Kaggle Fake News Dataset",
-
-        "mode":
-            "trained"
-    }
-
-    with open(
-        os.path.join(SAVE_DIR, 'metrics.json'),
-        'w'
-    ) as f:
-
-        json.dump(metrics, f, indent=2)
-
-    # Save training history
-    history = {
-
-        "epochs":
-            list(range(1, 11)),
-
-        "train_accuracy": [
-            68.2,
-            74.1,
-            79.5,
-            83.8,
-            87.2,
-            89.1,
-            90.4,
-            91.2,
-            92.0,
-            92.6
-        ],
-
-        "val_accuracy": [
-            65.1,
-            72.4,
-            77.3,
-            81.6,
-            85.4,
-            87.1,
-            88.3,
-            89.0,
-            89.4,
-            89.8
-        ],
-
-        "train_loss": [
-            0.68,
-            0.57,
-            0.49,
-            0.42,
-            0.36,
-            0.31,
-            0.28,
-            0.24,
-            0.22,
-            0.20
-        ],
-
-        "val_loss": [
-            0.71,
-            0.61,
-            0.53,
-            0.47,
-            0.41,
-            0.38,
-            0.35,
-            0.33,
-            0.31,
-            0.29
-        ]
-    }
-
-    with open(
-        os.path.join(
-            SAVE_DIR,
-            'training_history.json'
-        ),
-        'w'
-    ) as f:
-
-        json.dump(history, f, indent=2)
-
-    elapsed = time.time() - start_time
-
-    print(
-        f"\nTraining completed in "
-        f"{elapsed / 60:.2f} minutes"
-    )
-
-    print(
-        f"Model saved to: {SAVE_DIR}"
-    )
-
+    # ================================================================
+    # Summary
+    # ================================================================
+    elapsed = time.time() - start
+    print("\n" + "=" * 60)
+    print(f" Training complete in {elapsed / 60:.2f} minutes")
+    print(f" Article  model accuracy : {metrics_article['accuracy']}%")
+    print(f" Headline model accuracy : {metrics_headline['accuracy']}%")
+    print(f" Models saved to        : {SAVE_DIR}")
     print("=" * 60)
 
 
 if __name__ == '__main__':
-    main() 
+    main()

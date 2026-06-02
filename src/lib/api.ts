@@ -5,14 +5,29 @@
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+export type InputMode = 'headline' | 'article';
+
+export interface DbVerification {
+  verified: boolean;
+  match_score: number;       // 0-100
+  best_match: string | null;
+  status: 'VERIFIED' | 'PARTIAL' | 'UNVERIFIED' | 'NO_DB' | 'ERROR';
+  db_count: number;
+  similar_count: number;     // # of headlines loosely related (score >= 0.15)
+}
+
 export interface PredictionResult {
-  prediction: 'REAL' | 'FAKE';
+  prediction: 'REAL' | 'FAKE' | 'SUSPICIOUS';
   confidence: number;
   probability_fake: number;
   probability_real: number;
   preprocessing_steps: PreprocessingSteps;
   model_used: string;
+  input_mode: InputMode;
+  detected_language: string;
+  translated_text: string | null;
   note?: string;
+  db_verification?: DbVerification;
 }
 
 export interface PreprocessingSteps {
@@ -42,11 +57,11 @@ export interface ModelMetrics {
   test_samples: number;
   model_architecture: {
     type: string;
-    embedding_dim: number;
-    hidden_dim: number;
-    num_layers: number;
-    dropout: number;
-    max_sequence_length: number;
+    embedding_dim?: number;
+    hidden_dim?: number;
+    num_layers?: number;
+    dropout?: number;
+    max_sequence_length?: number;
   };
   dataset: string;
   mode: string;
@@ -64,18 +79,22 @@ export interface TrainingHistory {
 export interface HealthStatus {
   status: string;
   model_loaded: boolean;
-  device: string;
-  mode: string;
+  model_type: string;
+  translation_enabled: boolean;
+  news_db_count: number;
 }
 
 /**
  * Send news text for fake/real classification.
  */
-export async function predictNews(text: string): Promise<PredictionResult> {
+export async function predictNews(
+  text: string,
+  inputMode: InputMode = 'article'
+): Promise<PredictionResult> {
   const response = await fetch(`${API_URL}/api/predict`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, input_mode: inputMode }),
   });
 
   if (!response.ok) {
@@ -85,6 +104,8 @@ export async function predictNews(text: string): Promise<PredictionResult> {
 
   return response.json();
 }
+
+
 
 /**
  * Fetch model evaluation metrics.
